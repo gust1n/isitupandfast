@@ -15,12 +15,13 @@ import (
 )
 
 var (
-	listURL        = flag.String("list-url", "", "URL to JSON-formatted list of URLs to check")
-	pollInterval   = flag.Uint("poll-interval", 60, "Polling interval (in seconds)")
-	requestTimeout = flag.Uint("req-timeout", 20, "Timeout for each HTTP request, must be < than poll-interval")
-	debug          = flag.Bool("debug", false, "To enable a more verbose mode for debugging")
-	influxHost     = flag.String("influx-host", "http://localhost:8086", "InfluxDB host")
-	influxDBName   = flag.String("influx-db", "uptime", "InfluxDB database name")
+	listURL               = flag.String("list-url", "", "URL to JSON-formatted list of URLs to check")
+	pollInterval          = flag.Uint("poll-interval", 60, "Polling interval (in seconds)")
+	requestTimeout        = flag.Uint("req-timeout", 20, "Timeout for each HTTP request, must be < than poll-interval")
+	debug                 = flag.Bool("debug", false, "To enable a more verbose mode for debugging")
+	influxHost            = flag.String("influx-host", "http://localhost:8086", "InfluxDB host")
+	influxDBName          = flag.String("influx-db", "uptime", "InfluxDB database name")
+	influxMeasurementName = flag.String("influx-measurement", "page_load_time", "InfluxDB measurement to write to")
 
 	// Global list of urls to fetch
 	list *urlList
@@ -164,7 +165,7 @@ func handleReponses(cl client.Client, batchSize int, ch chan request) {
 			} else {
 				tags["status_code"] = strconv.Itoa(req.StatusCode)
 			}
-			pt, err := client.NewPoint("page_load_time", tags, fields, time.Now())
+			pt, err := client.NewPoint(*influxMeasurementName, tags, fields, time.Now())
 			if err != nil {
 				fmt.Println("Error creating InfluxDB point: ", err.Error())
 			}
