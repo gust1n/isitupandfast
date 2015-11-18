@@ -143,7 +143,7 @@ func send(req request, timeout time.Duration, resp chan request) {
 func handleReponses(cl client.Client, batchSize int, ch chan request) {
 	bpConfig := client.BatchPointsConfig{
 		Database:  *influxDBName,
-		Precision: "ms",
+		Precision: "ns",
 	}
 	// Create initial batch
 	bp, _ := client.NewBatchPoints(bpConfig)
@@ -152,7 +152,7 @@ func handleReponses(cl client.Client, batchSize int, ch chan request) {
 		case req := <-ch:
 			tags := map[string]string{"url": req.URL}
 			fields := map[string]interface{}{
-				"duration": req.Duration,
+				"duration": strconv.FormatInt(req.Duration.Nanoseconds(), 10),
 			}
 			if req.err != nil {
 				if req.err == errTimeout {
