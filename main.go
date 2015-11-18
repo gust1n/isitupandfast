@@ -53,10 +53,6 @@ func main() {
 		fmt.Println("Must pass list-url")
 		os.Exit(1)
 	}
-	if *requestTimeout >= *pollInterval {
-		fmt.Println("req-timeout must be < than poll-interval")
-		os.Exit(1)
-	}
 
 	if *debug {
 		fmt.Printf("Connecting to DB '%s' at %s\n", *influxDBName, *influxHost)
