@@ -74,61 +74,56 @@ func main() {
 		}
 	}()
 
-	// Keep a count of which run this is
-	var count int
-
 	// Channel to send concurrent responses on
-	respCh := make(chan request)
+	respCh := make(chan request, 10)
 
 	// Read responses (concurrently) as they come in
 	go handleReponses(respCh)
 
 	// The actual fetching of URLs
 	for {
-		count++
-		if *debug {
-			fmt.Printf("Round #%d\n", count)
-		}
 		list.lock.Lock()
 		for _, u := range list.urls {
-			start := time.Now()
 			// Setup request object
 			req := request{
 				URL:  u.URL,
 				done: make(chan struct{}),
 			}
-			// Send each request in it's own goroutine, writing to
-			go func() {
-				if *debug {
-					fmt.Println("Sending a request to", req.URL)
-				}
-				resp, err := http.Get(req.URL)
-				if err != nil {
-					req.err = err
-				} else {
-					req.StatusCode = resp.StatusCode
-				}
-				// Indicate the request is finished
-				close(req.done)
-
-			}()
-			// Either the request finished, or the timeout triggers
-			select {
-			case <-req.done:
-				// How long did the request take, only applies if not timed out
-				req.Duration = time.Since(start)
-			case <-time.After(time.Second * time.Duration(int(*requestTimeout))):
-				req.err = errTimeout
-			}
-			// Send back on the response channel
-			respCh <- req
+			// Send it in it's own goroutine
+			go send(req, time.Second*time.Duration(int(*requestTimeout)), respCh)
 		}
 		list.lock.Unlock()
-		if *debug {
-			fmt.Printf("Round #%d sent, sleeping %ds\n", count, *pollInterval)
-		}
 		time.Sleep(time.Second * time.Duration(int(*pollInterval)))
 	}
+}
+
+func send(req request, timeout time.Duration, resp chan request) {
+	if *debug {
+		fmt.Println("Sending a request to", req.URL)
+	}
+	start := time.Now()
+	// Send the HTTP request in it's own goroutine to be able to abort the request if reached timeout
+	go func() {
+		resp, err := http.Get(req.URL)
+		if err != nil {
+			req.err = err
+		} else {
+			req.StatusCode = resp.StatusCode
+		}
+		// Indicate the request is finished
+		close(req.done)
+
+	}()
+	// Either the request finished, or the timeout triggers
+	select {
+	case <-req.done:
+		// How long did the request take, only applies if not timed out
+		req.Duration = time.Since(start)
+	case <-time.After(timeout):
+		req.err = errTimeout
+	}
+	// Send back on the response channel
+	resp <- req
 }
 
 // Handles responses sent on passed channel
