@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
+
+	"github.com/influxdb/influxdb/client/v2"
 )
 
 var (
@@ -16,6 +19,8 @@ var (
 	pollInterval   = flag.Uint("poll-interval", 60, "Polling interval (in seconds)")
 	requestTimeout = flag.Uint("req-timeout", 20, "Timeout for each HTTP request, must be < than poll-interval")
 	debug          = flag.Bool("debug", false, "To enable a more verbose mode for debugging")
+	influxHost     = flag.String("influx-host", "http://localhost:8086", "InfluxDB host")
+	influxDBName   = flag.String("influx-db", "uptime", "InfluxDB database name")
 
 	// Global list of urls to fetch
 	list *urlList
@@ -53,6 +58,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	if *debug {
+		fmt.Printf("Connecting to DB '%s' at %s\n", *influxDBName, *influxHost)
+	}
+	influxClient, err := client.NewHTTPClient(client.HTTPConfig{
+		Addr: *influxHost,
+	})
+	if err != nil {
+		fmt.Println("Error creating InfluxDB client:", err)
+	}
+
 	// Initialize global list
 	list = &urlList{
 		lock: sync.Mutex{},
@@ -78,7 +93,7 @@ func main() {
 	respCh := make(chan request, 10)
 
 	// Read responses (concurrently) as they come in
-	go handleReponses(respCh)
+	go handleReponses(influxClient, len(list.urls), respCh)
 
 	// The actual fetching of URLs
 	for {
@@ -120,6 +135,7 @@ func send(req request, timeout time.Duration, resp chan request) {
 		// How long did the request take, only applies if not timed out
 		req.Duration = time.Since(start)
 	case <-time.After(timeout):
+		req.Duration = timeout
 		req.err = errTimeout
 	}
 	// Send back on the response channel
@@ -127,19 +143,48 @@ func send(req request, timeout time.Duration, resp chan request) {
 }
 
 // Handles responses sent on passed channel
-func handleReponses(ch chan request) {
+func handleReponses(cl client.Client, batchSize int, ch chan request) {
+	bpConfig := client.BatchPointsConfig{
+		Database:  *influxDBName,
+		Precision: "ms",
+	}
+	// Create initial batch
+	bp, _ := client.NewBatchPoints(bpConfig)
 	for {
-		// Print to stdout for now
 		select {
 		case req := <-ch:
+			tags := map[string]string{"url": req.URL}
+			fields := map[string]interface{}{
+				"duration": req.Duration,
+			}
 			if req.err != nil {
 				if req.err == errTimeout {
-					fmt.Printf("%s\tTIMEOUT\n", req.URL)
+					tags["status_code"] = strconv.Itoa(408)
 				} else {
+					// If error from the HTTP request, print to stdout and dont add new point
 					fmt.Printf("Error for %s: %s\n", req.URL, req.err)
+					continue
 				}
 			} else {
+				tags["status_code"] = strconv.Itoa(req.StatusCode)
+			}
+			pt, err := client.NewPoint("page_load_time", tags, fields, time.Now())
+			if err != nil {
+				fmt.Println("Error creating InfluxDB point: ", err.Error())
+			}
+			// Add point to current batch
+			bp.AddPoint(pt)
+			if *debug {
 				fmt.Printf("%s\t%d\t%s\n", req.URL, req.StatusCode, req.Duration)
+			}
+			// If should send current batch
+			if len(bp.Points()) == batchSize {
+				if *debug {
+					fmt.Println("Writing points to InfluxDB")
+				}
+				cl.Write(bp)
+				// Create a new batch
+				bp, _ = client.NewBatchPoints(bpConfig)
 			}
 		}
 	}
