@@ -157,7 +157,7 @@ func handleReponses(cl client.Client, batchSize int, ch chan request) {
 			tags := map[string]string{"url": req.URL}
 			dur := req.Duration.Nanoseconds()
 			if *precision == "ms" {
-				dur = dur / 1000
+				dur = dur / 1000000
 			}
 			fields := map[string]interface{}{
 				"value": dur,
