@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -152,18 +151,18 @@ func handleReponses(cl client.Client, batchSize int, ch chan request) {
 		case req := <-ch:
 			tags := map[string]string{"url": req.URL}
 			fields := map[string]interface{}{
-				"value": strconv.FormatInt(req.Duration.Nanoseconds(), 10),
+				"value": req.Duration.Nanoseconds(),
 			}
 			if req.err != nil {
 				if req.err == errTimeout {
-					tags["status_code"] = strconv.Itoa(408)
+					fields["status_code"] = 408
 				} else {
 					// If error from the HTTP request, print to stdout and dont add new point
 					fmt.Printf("Error for %s: %s\n", req.URL, req.err)
 					continue
 				}
 			} else {
-				tags["status_code"] = strconv.Itoa(req.StatusCode)
+				fields["status_code"] = req.StatusCode
 			}
 			pt, err := client.NewPoint(*influxMeasurementName, tags, fields)
 			if err != nil {
