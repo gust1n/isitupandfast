@@ -19,6 +19,7 @@ var (
 	requestTimeout        = flag.Uint("req-timeout", 20, "Timeout for each HTTP request, must be < than poll-interval")
 	precision             = flag.String("precision", "ns", "Precision, valid values are ns and ms")
 	debug                 = flag.Bool("debug", false, "To enable a more verbose mode for debugging")
+	influxBatchSize       = flag.Int("influx-batch", 0, "Batch size to write to Influx, 0 means batch size = number of URLs")
 	influxHost            = flag.String("influx-host", "http://localhost:8086", "InfluxDB host")
 	influxDBName          = flag.String("influx-db", "uptime", "InfluxDB database name")
 	influxMeasurementName = flag.String("influx-measurement", "page_load_time", "InfluxDB measurement to write to")
@@ -94,7 +95,7 @@ func main() {
 	respCh := make(chan request, 10)
 
 	// Read responses (concurrently) as they come in
-	go handleReponses(influxClient, len(list.urls), respCh)
+	go handleReponses(influxClient, *influxBatchSize, respCh)
 
 	// The actual fetching of URLs
 	for {
@@ -214,6 +215,11 @@ func updateURLsToFecth(url string, ul *urlList) error {
 	list.lock.Lock()
 	list.urls = fetchableURLs
 	list.lock.Unlock()
+	// Update InfluxDB batch size (if not manually set)
+	if *influxBatchSize == 0 {
+		*influxBatchSize = len(list.urls)
+	}
+
 	if *debug {
 		fmt.Println("Current list of URLs is:")
 		for _, u := range list.urls {
