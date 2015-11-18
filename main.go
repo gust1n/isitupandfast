@@ -17,6 +17,7 @@ var (
 	listURL               = flag.String("list-url", "", "URL to JSON-formatted list of URLs to check")
 	pollInterval          = flag.Uint("poll-interval", 60, "Polling interval (in seconds)")
 	requestTimeout        = flag.Uint("req-timeout", 20, "Timeout for each HTTP request, must be < than poll-interval")
+	precision             = flag.String("precision", "ns", "Precision, valid values are ns and ms")
 	debug                 = flag.Bool("debug", false, "To enable a more verbose mode for debugging")
 	influxHost            = flag.String("influx-host", "http://localhost:8086", "InfluxDB host")
 	influxDBName          = flag.String("influx-db", "uptime", "InfluxDB database name")
@@ -51,6 +52,10 @@ func main() {
 	// Validate command line arguments
 	if len(*listURL) == 0 {
 		fmt.Println("Must pass list-url")
+		os.Exit(1)
+	}
+	if *precision != "ns" && *precision != "ms" {
+		fmt.Println("precision must be ms or ns")
 		os.Exit(1)
 	}
 
@@ -142,7 +147,7 @@ func send(req request, timeout time.Duration, resp chan request) {
 func handleReponses(cl client.Client, batchSize int, ch chan request) {
 	bpConfig := client.BatchPointsConfig{
 		Database:  *influxDBName,
-		Precision: "ns",
+		Precision: *precision,
 	}
 	// Create initial batch
 	bp, _ := client.NewBatchPoints(bpConfig)
@@ -150,8 +155,12 @@ func handleReponses(cl client.Client, batchSize int, ch chan request) {
 		select {
 		case req := <-ch:
 			tags := map[string]string{"url": req.URL}
+			dur := req.Duration.Nanoseconds()
+			if *precision == "ms" {
+				dur = dur / 1000
+			}
 			fields := map[string]interface{}{
-				"value": req.Duration.Nanoseconds(),
+				"value": dur,
 			}
 			if req.err != nil {
 				if req.err == errTimeout {
