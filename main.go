@@ -165,7 +165,7 @@ func handleReponses(cl client.Client, batchSize int, ch chan request) {
 			} else {
 				tags["status_code"] = strconv.Itoa(req.StatusCode)
 			}
-			pt, err := client.NewPoint(*influxMeasurementName, tags, fields, time.Now())
+			pt, err := client.NewPoint(*influxMeasurementName, tags, fields)
 			if err != nil {
 				fmt.Println("Error creating InfluxDB point: ", err.Error())
 			}
