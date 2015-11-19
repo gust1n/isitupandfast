@@ -97,7 +97,9 @@ func main() {
 	go handleReponses(influxClient, *influxBatchSize, respCh)
 
 	// Setup HTTP client to use to send the requests
-	tr := &http.Transport{}
+	tr := &http.Transport{
+		DisableKeepAlives: true,
+	}
 	httpClient := &http.Client{Transport: tr}
 
 	// The actual fetching of URLs
