@@ -16,7 +16,7 @@ import (
 var (
 	listURL               = flag.String("list-url", "", "URL to JSON-formatted list of URLs to check")
 	pollInterval          = flag.Uint("poll-interval", 60, "Polling interval (in seconds)")
-	requestTimeout        = flag.Uint("req-timeout", 20, "Timeout for each HTTP request, must be < than poll-interval")
+	requestTimeout        = flag.Uint("req-timeout", 20, "Timeout for each HTTP request (in seconds)")
 	precision             = flag.String("precision", "ns", "Precision, valid values are ns and ms")
 	debug                 = flag.Bool("debug", false, "To enable a more verbose mode for debugging")
 	influxBatchSize       = flag.Int("influx-batch", 0, "Batch size to write to Influx, 0 means batch size = number of URLs")
@@ -31,9 +31,7 @@ var (
 )
 
 type fetchableURL struct {
-	URL         string
-	Description string
-	// More fields to come
+	URL string
 }
 
 type urlList struct {
@@ -42,7 +40,7 @@ type urlList struct {
 }
 
 type request struct {
-	URL        string
+	httpReq    *http.Request
 	Duration   time.Duration
 	StatusCode int
 	done       chan struct{} // closes when request is done
@@ -61,13 +59,14 @@ func main() {
 	}
 
 	if *debug {
-		fmt.Printf("Connecting to DB '%s' at %s\n", *influxDBName, *influxHost)
+		fmt.Printf("Connecting to InfluxDB %s@%s\n", *influxDBName, *influxHost)
 	}
 	influxClient, err := client.NewHTTPClient(client.HTTPConfig{
 		Addr: *influxHost,
 	})
 	if err != nil {
 		fmt.Println("Error creating InfluxDB client:", err)
+		os.Exit(1)
 	}
 
 	// Initialize global list
@@ -92,36 +91,50 @@ func main() {
 	}()
 
 	// Channel to send concurrent responses on
-	respCh := make(chan request, 10)
+	respCh := make(chan request)
 
 	// Read responses (concurrently) as they come in
 	go handleReponses(influxClient, *influxBatchSize, respCh)
 
+	// Setup HTTP client to use to send the requests
+	tr := &http.Transport{}
+	httpClient := &http.Client{Transport: tr}
+
 	// The actual fetching of URLs
 	for {
+		// Make sure the list is not tampered with when iterating over it
 		list.lock.Lock()
 		for _, u := range list.urls {
+			// Setup underlying http request
+			httpReq, err := http.NewRequest("GET", u.URL, nil)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+
 			// Setup request object
 			req := request{
-				URL:  u.URL,
-				done: make(chan struct{}),
+				done:    make(chan struct{}),
+				httpReq: httpReq,
 			}
 			// Send it in it's own goroutine
-			go send(req, time.Second*time.Duration(int(*requestTimeout)), respCh)
+			go send(httpClient, tr, req, time.Second*time.Duration(int(*requestTimeout)), respCh)
 		}
 		list.lock.Unlock()
 		time.Sleep(time.Second * time.Duration(int(*pollInterval)))
 	}
 }
 
-func send(req request, timeout time.Duration, resp chan request) {
+// send sends a request, kills it after passed timeout and writes the result to passed channel
+func send(httpClient *http.Client, tr *http.Transport, req request, timeout time.Duration, resp chan request) {
 	if *debug {
-		fmt.Println("Sending a request to", req.URL)
+		fmt.Println("Sending a request to", req.httpReq.URL)
 	}
 	start := time.Now()
-	// Send the HTTP request in it's own goroutine to be able to abort the request if reached timeout
+	// Send the HTTP request in it's own goroutine using a HTTP client to be able to abort the request if reached timeout
 	go func() {
-		resp, err := http.Get(req.URL)
+		// Setup real HTTP client to be able to cancel the request
+		resp, err := httpClient.Do(req.httpReq)
 		if err != nil {
 			req.err = err
 		} else {
@@ -129,7 +142,6 @@ func send(req request, timeout time.Duration, resp chan request) {
 		}
 		// Indicate the request is finished
 		close(req.done)
-
 	}()
 	// Either the request finished, or the timeout triggers
 	select {
@@ -137,6 +149,8 @@ func send(req request, timeout time.Duration, resp chan request) {
 		// How long did the request take, only applies if not timed out
 		req.Duration = time.Since(start)
 	case <-time.After(timeout):
+		// Manually cancel the request in flight
+		tr.CancelRequest(req.httpReq)
 		req.Duration = timeout
 		req.err = errTimeout
 	}
@@ -155,7 +169,7 @@ func handleReponses(cl client.Client, batchSize int, ch chan request) {
 	for {
 		select {
 		case req := <-ch:
-			tags := map[string]string{"url": req.URL}
+			tags := map[string]string{"url": req.httpReq.URL.String()}
 			dur := req.Duration.Nanoseconds()
 			if *precision == "ms" {
 				dur = dur / 1000000
@@ -168,7 +182,7 @@ func handleReponses(cl client.Client, batchSize int, ch chan request) {
 					fields["status_code"] = 408
 				} else {
 					// If error from the HTTP request, print to stdout and dont add new point
-					fmt.Printf("Error for %s: %s\n", req.URL, req.err)
+					fmt.Printf("Error for %s: %s\n", req.httpReq.URL, req.err)
 					continue
 				}
 			} else {
@@ -181,7 +195,7 @@ func handleReponses(cl client.Client, batchSize int, ch chan request) {
 			// Add point to current batch
 			bp.AddPoint(pt)
 			if *debug {
-				fmt.Printf("%s\t%d\t%s\n", req.URL, req.StatusCode, req.Duration)
+				fmt.Printf("%s\t%d\t%s\n", req.httpReq.URL, req.StatusCode, req.Duration)
 			}
 			// If should send current batch
 			if len(bp.Points()) == batchSize {
