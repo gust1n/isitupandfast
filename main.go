@@ -130,15 +130,16 @@ func send(httpClient *http.Client, tr *http.Transport, req request, timeout time
 	if *debug {
 		fmt.Println("Sending a request to", req.httpReq.URL)
 	}
-	start := time.Now()
 	// Send the HTTP request in it's own goroutine using a HTTP client to be able to abort the request if reached timeout
 	go func() {
+		start := time.Now()
 		// Setup real HTTP client to be able to cancel the request
 		resp, err := httpClient.Do(req.httpReq)
 		if err != nil {
 			req.err = err
 		} else {
 			req.StatusCode = resp.StatusCode
+			req.Duration = time.Since(start)
 		}
 		// Indicate the request is finished
 		close(req.done)
@@ -146,12 +147,11 @@ func send(httpClient *http.Client, tr *http.Transport, req request, timeout time
 	// Either the request finished, or the timeout triggers
 	select {
 	case <-req.done:
-		// How long did the request take, only applies if not timed out
-		req.Duration = time.Since(start)
+		// Request is done, please continue
 	case <-time.After(timeout):
+		req.Duration = timeout
 		// Manually cancel the request in flight
 		tr.CancelRequest(req.httpReq)
-		req.Duration = timeout
 		req.err = errTimeout
 	}
 	// Send back on the response channel
