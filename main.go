@@ -133,13 +133,13 @@ func send(httpClient *http.Client, tr *http.Transport, req request, timeout time
 	// Send the HTTP request in it's own goroutine using a HTTP client to be able to abort the request if reached timeout
 	go func() {
 		start := time.Now()
-		// Setup real HTTP client to be able to cancel the request
 		resp, err := httpClient.Do(req.httpReq)
 		if err != nil {
 			req.err = err
 		} else {
 			req.StatusCode = resp.StatusCode
 			req.Duration = time.Since(start)
+			resp.Body.Close()
 		}
 		// Indicate the request is finished
 		close(req.done)
